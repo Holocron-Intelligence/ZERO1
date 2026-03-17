@@ -39,23 +39,67 @@
 
 ## ⚡ Quick Start
 
+### Step 1 — Install dependencies
+
 ```bash
-# 1. Clone the repository
+# Clone the repository
 git clone https://github.com/YOUR_USER/zeroone.git && cd zeroone
 
-# 2. Run the setup (Windows)
+# Run the one-click Windows installer
 setup.bat
+```
 
-# 3. Add your Solana private key
-#    Place your id.json file in the root folder
+---
 
-# 4. Launch with dashboard
+### Step 2 — Add your Private Key 🔑
+
+> [!CAUTION]
+> **This step is mandatory.** The bot cannot sign transactions without your private key.
+> Never share this file with anyone, and never commit it to Git.
+
+A template file **`id.json.example`** is already included in the project.
+
+**Steps:**
+1. Copy `id.json.example` → rename the copy to **`id.json`**
+2. Open `id.json` and replace the placeholder with your **Base58 private key**
+3. Save. Done ✅
+
+```json
+{
+  "PRIVATE_KEY": "5Jkm3xyzABCDEFGHIJKLMN..."
+}
+```
+
+Place **`id.json`** in the root folder of the project (same folder as `setup.bat`):
+
+```
+zeroone/
+├── id.json       ← ✅ HERE
+├── setup.bat
+├── config/
+└── src/
+```
+
+**How to get your Base58 private key:**
+
+| Wallet | Steps |
+| :--- | :--- |
+| **Phantom** | Settings → Security & Privacy → **Export Private Key** → copy the string |
+| **Solflare** | Settings → Export Wallet → **Private Key** → copy the string |
+| **01 Exchange** | Use the private key of the keypair linked to your account |
+
+> [!TIP]
+> Use a **dedicated trading wallet** with only the capital you intend to use — not your main wallet.
+
+---
+
+### Step 3 — Launch the bot
+
+```bash
 python -m src.cli --dashboard
 ```
 
-Open **[http://localhost:8000](http://localhost:8000)** to view the dashboard.
-
-> **What is `id.json`?** — Your Solana Wallet Private Key in JSON format (array of 64 numbers). Export it from Phantom, Solflare, or use your existing 01 Exchange keypair.
+Open **[http://localhost:8000](http://localhost:8000)** to view the live dashboard.
 
 ---
 

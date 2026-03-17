@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-from base58 import b58encode
+from base58 import b58encode, b58decode
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from src.api import schema_pb2
@@ -84,12 +84,24 @@ class O1Client:
             await self.session.close()
 
     def _load_keypair(self, path: str) -> None:
-        """Load Solana keypair from JSON file."""
+        """Load Solana keypair from JSON file.
+        
+        Supports two formats:
+        1. Simple object: {"PRIVATE_KEY": "<base58string>"}
+        2. Legacy array:  [12, 34, 56, ... ] (64 numbers)
+        """
         with open(path, "r") as f:
             key_data = json.load(f)
-        self._user_key = Ed25519PrivateKey.from_private_bytes(
-            bytes(key_data[:32])
-        )
+
+        if isinstance(key_data, dict):
+            # Format 1: {"PRIVATE_KEY": "<base58string>"}
+            raw = b58decode(key_data["PRIVATE_KEY"])
+            private_bytes = raw[:32]
+        else:
+            # Format 2: legacy JSON array of 64 numbers
+            private_bytes = bytes(key_data[:32])
+
+        self._user_key = Ed25519PrivateKey.from_private_bytes(private_bytes)
         self._user_pubkey = self._user_key.public_key().public_bytes_raw()
         logger.info("Loaded keypair: %s", b58encode(self._user_pubkey).decode())
 
