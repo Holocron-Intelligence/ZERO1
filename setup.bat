@@ -37,20 +37,11 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 4. Setup Environment File
-echo [3/4] Preparing .env file...
-if not exist .env (
-    copy .env.example .env >nul
-    echo [OK] Created .env from template.
-) else (
-    echo [SKIP] .env already exists.
-)
-
-:: 5. Final Checks
-echo [4/4] Finalizing setup...
+:: 4. Finalizing
+echo [3/4] Readying the bot...
 if not exist id.json (
-    echo.
-    echo [IMPORTANT] Please place your 'id.json' keypair in this folder.
+    copy id.json.example id.json >nul
+    echo [OK] Created id.json template.
 )
 
 echo.
@@ -59,7 +50,7 @@ echo #          SETUP COMPLETE!                 #
 echo ############################################
 echo.
 echo To start the bot:
-echo 1. Edit .env with your settings
-echo 2. Run: launcher.bat (to be created) OR python launcher.py
+echo 1. Just double-click: launcher.bat
+echo 2. OR run: python launcher.py
 echo.
 pause

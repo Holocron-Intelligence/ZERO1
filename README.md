@@ -98,10 +98,14 @@ zeroone/
 Simply run the **Desktop Launcher GUI**:
 
 ```bash
+# Recommended on Windows:
+launcher.bat
+
+# Or using Python:
 python launcher.py
 ```
 
-*(If you received the compiled version, simply double-click `ZeroOne.exe` or `Launcher.exe`).*
+*(If you received the compiled version, simply double-click `ZeroOne.exe`).*
 
 1. Paste your **Private Key** (Mandatory for Real Trading — you can skip this *only* if you already created `id.json`)
 2. Select the coins you want to trade (minimum 1, limited by your capital)

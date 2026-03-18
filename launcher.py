@@ -387,7 +387,7 @@ class UltraStableLauncher(ctk.CTk):
             # Run the fetch in a temporary loop
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            fetched = loop.run_until_complete(do_fetch())
+            fetched: list | None = loop.run_until_complete(do_fetch())
             self.available_markets = [str(s) for s in fetched] if fetched else []
             loop.close()
             
