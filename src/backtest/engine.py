@@ -22,7 +22,7 @@ from src.risk.manager import (
     compute_position_size,
     compute_stop_loss,
 )
-from src.strategy.grid import AdaptiveGrid, GridLevel, GridState
+from src.strategy.grid import AdaptiveGrid, GridInput, GridLevel, GridState
 from src.strategy.regime import RegimeDetector, RegimeState
 from src.strategy.signals import SignalPipeline, Signal
 
@@ -437,14 +437,14 @@ class BacktestEngine:
                 # Apply signal weights
                 base_size = sizing.size_base / cfg.grid.levels  # Per level
 
-                current_grid = grid_gen.generate(
+                current_grid = grid_gen.generate(GridInput(
                     mid_price=close,
                     atr_value=atr_val,
                     bias_score=bias.score if not bias.is_anomalous else 0.0,
                     regime=regime.regime,
                     base_size=base_size,
                     stop_atr_mult=stop_mult,
-                )
+                ))
 
                 # Apply signal filter: remove blocked sides
                 if not signal.allow_long:
