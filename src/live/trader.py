@@ -700,23 +700,23 @@ class LiveTrader:
         if state.buy_size <= 0 and state.sell_size <= 0:
             return
             
-        fee_pct = self.config.fees.maker_fee_pct / 100
         slippage = self.config.backtest.slippage_bps / 10000
 
         if state.buy_size > 0 and current_price <= state.buy_price:
             fill_price = state.buy_price * (1 + slippage)
-            self._execute_fill(symbol, "BUY", fill_price, state.buy_size, fee_pct)
+            self._execute_fill(symbol, "BUY", fill_price, state.buy_size)
             state.buy_size = 0
             state.candles_in_position = 0
 
         elif state.sell_size > 0 and current_price >= state.sell_price:
             fill_price = state.sell_price * (1 - slippage)
-            self._execute_fill(symbol, "SELL", fill_price, state.sell_size, fee_pct)
+            self._execute_fill(symbol, "SELL", fill_price, state.sell_size)
             state.sell_size = 0
             state.candles_in_position = 0
 
-    def _execute_fill(self, symbol: str, side: str, price: float, size: float, fee_pct: float):
+    def _execute_fill(self, symbol: str, side: str, price: float, size: float):
         state = self.mm_states[symbol]
+        fee_pct = self.config.fees.maker_fee_pct / 100
         fee = size * price * fee_pct
         trade_vol = size * price
         
