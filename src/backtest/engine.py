@@ -22,7 +22,7 @@ from src.risk.manager import (
     compute_position_size,
     compute_stop_loss,
 )
-from src.strategy.grid import AdaptiveGrid, GridLevel, GridState
+from src.strategy.grid import AdaptiveGrid, GridInput, GridLevel, GridState
 from src.strategy.regime import RegimeDetector, RegimeState
 from src.strategy.signals import SignalPipeline, Signal
 
@@ -75,6 +75,39 @@ class Position:
         else:
             self.unrealized_pnl = (self.avg_entry - current_price) * self.size
         return self.unrealized_pnl
+
+    def add(self, side: str, size: float, price: float, stop: float) -> None:
+        """Add to or create a position."""
+        if size <= 0:
+            return
+
+        if not self.is_open:
+            self.side = side
+            self.size = size
+            self.avg_entry = price
+            self.stop_loss = stop
+        elif self.side == side:
+            # Add to existing -> weighted average entry
+            total_size = self.size + size
+            self.avg_entry = (
+                (self.avg_entry * self.size + price * size) / total_size
+            )
+            self.size = total_size
+            # Keep the tightest stop
+            if side == "LONG":
+                self.stop_loss = max(self.stop_loss, stop)
+            else:
+                self.stop_loss = min(self.stop_loss, stop)
+        else:
+            # Opposite side -> close or reduce
+            if size >= self.size:
+                # Fully close + reverse
+                self.side = side
+                self.size = size - self.size
+                self.avg_entry = price
+                self.stop_loss = stop
+            else:
+                self.size -= size
 
 
 # ? Backtest Engine ?
@@ -266,7 +299,11 @@ class BacktestEngine:
             liq_above = float(np.sum(window_weighted[mask_above]))
             liq_below = float(np.sum(window_weighted[~mask_above]))
             
-            bias = heatmap.compute_direct(liq_above, liq_below, close, high, low)
+            spread_bps = 0.0
+            if close > 0:
+                spread_bps = (high - low) / close * 10000 * 0.1
+
+            bias = heatmap.compute_direct(liq_above, liq_below, spread_bps)
 
             # ? 4. Evaluate regime + signals ?
             regime = regime_det.detect(
@@ -351,8 +388,8 @@ class BacktestEngine:
                             dd_monitor.record_trade(realized_pnl - fee)
 
                         # Update position
-                        self._add_to_position(
-                            position, target_side, level.size,
+                        position.add(
+                            target_side, level.size,
                             fill_price, level.stop_loss,
                         )
 
@@ -437,14 +474,14 @@ class BacktestEngine:
                 # Apply signal weights
                 base_size = sizing.size_base / cfg.grid.levels  # Per level
 
-                current_grid = grid_gen.generate(
+                current_grid = grid_gen.generate(GridInput(
                     mid_price=close,
                     atr_value=atr_val,
                     bias_score=bias.score if not bias.is_anomalous else 0.0,
                     regime=regime.regime,
                     base_size=base_size,
                     stop_atr_mult=stop_mult,
-                )
+                ))
 
                 # Apply signal filter: remove blocked sides
                 if not signal.allow_long:
@@ -510,42 +547,6 @@ class BacktestEngine:
             position.side, position.avg_entry, close_price, pnl, reason,
         )
         return pnl
-
-    def _add_to_position(
-        self, position: Position, side: str, size: float,
-        price: float, stop: float,
-    ) -> None:
-        """Add to or create a position."""
-        if size <= 0:
-            return
-
-        if not position.is_open:
-            position.side = side
-            position.size = size
-            position.avg_entry = price
-            position.stop_loss = stop
-        elif position.side == side:
-            # Add to existing ? weighted average entry
-            total_size = position.size + size
-            position.avg_entry = (
-                (position.avg_entry * position.size + price * size) / total_size
-            )
-            position.size = total_size
-            # Keep the tightest stop
-            if side == "LONG":
-                position.stop_loss = max(position.stop_loss, stop)
-            else:
-                position.stop_loss = min(position.stop_loss, stop)
-        else:
-            # Opposite side ? close or reduce
-            if size >= position.size:
-                # Fully close + reverse
-                position.side = side
-                position.size = size - position.size
-                position.avg_entry = price
-                position.stop_loss = stop
-            else:
-                position.size -= size
 
     def _compute_metrics(
         self,

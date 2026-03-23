@@ -79,7 +79,7 @@ class LiveTrader:
         # Map symbol -> market_id for REST polling
         self.market_ids: Dict[str, int] = {}
         self.last_trade_times: Dict[str, int] = {}
-        self.market_decimals: Dict[str, tuple[int, int]] = {} # (price_dec, size_dec)
+        self.market_decimals: Dict[str, tuple[int, int, int, int]] = {} # (price_dec, size_dec, factor, price_factor)
         
         # External clients
         self.binance: BinanceDataClient = BinanceDataClient()
@@ -154,7 +154,9 @@ class LiveTrader:
                     continue
                     
                 self.market_ids[symbol] = mi.market_id
-                self.market_decimals[symbol] = (mi.price_decimals, mi.size_decimals) # type: ignore
+                price_dec = mi.price_decimals # type: ignore
+                size_dec = mi.size_decimals # type: ignore
+                self.market_decimals[symbol] = (price_dec, size_dec, 10 ** size_dec, 10 ** price_dec)
                 self.aggregators[symbol] = CandleAggregator(self.config.timeframe)
                 self.mm_states[symbol] = MMSymbolState()
                 self.last_trade_times[symbol] = 0
@@ -452,10 +454,8 @@ class LiveTrader:
 
         half_spread = current_price * (spread_bps / 10000)
 
-        price_dec, size_dec = self.market_decimals[symbol]
-        factor = 10 ** size_dec
+        price_dec, size_dec, factor, price_factor = self.market_decimals[symbol]
         min_size = 1.0 / factor
-        price_factor = 10 ** price_dec
         min_tick = 1.0 / price_factor
         
         max_inv = self.balance * (mm_cfg.max_inventory_pct / 100)
@@ -617,9 +617,7 @@ class LiveTrader:
                 await asyncio.gather(*cancels, return_exceptions=True)
                 await asyncio.sleep(0.3)
                 
-            price_dec, size_dec = self.market_decimals[symbol]
-            factor = 10 ** size_dec
-            price_factor = 10 ** price_dec
+            price_dec, size_dec, factor, price_factor = self.market_decimals[symbol]
             size = int(size * factor) / factor
             
             side = "SELL" if state.inventory > 0 else "BUY"
@@ -700,23 +698,23 @@ class LiveTrader:
         if state.buy_size <= 0 and state.sell_size <= 0:
             return
             
-        fee_pct = self.config.fees.maker_fee_pct / 100
         slippage = self.config.backtest.slippage_bps / 10000
 
         if state.buy_size > 0 and current_price <= state.buy_price:
             fill_price = state.buy_price * (1 + slippage)
-            self._execute_fill(symbol, "BUY", fill_price, state.buy_size, fee_pct)
+            self._execute_fill(symbol, "BUY", fill_price, state.buy_size)
             state.buy_size = 0
             state.candles_in_position = 0
 
         elif state.sell_size > 0 and current_price >= state.sell_price:
             fill_price = state.sell_price * (1 - slippage)
-            self._execute_fill(symbol, "SELL", fill_price, state.sell_size, fee_pct)
+            self._execute_fill(symbol, "SELL", fill_price, state.sell_size)
             state.sell_size = 0
             state.candles_in_position = 0
 
-    def _execute_fill(self, symbol: str, side: str, price: float, size: float, fee_pct: float):
+    def _execute_fill(self, symbol: str, side: str, price: float, size: float):
         state = self.mm_states[symbol]
+        fee_pct = self.config.fees.maker_fee_pct / 100
         fee = size * price * fee_pct
         trade_vol = size * price
         

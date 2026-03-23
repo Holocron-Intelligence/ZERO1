@@ -10,8 +10,6 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 
@@ -290,9 +288,7 @@ class BacktestHeatmap:
         self,
         liq_above: float,
         liq_below: float,
-        close: float,
-        high: float,
-        low: float,
+        spread_bps: float,
     ) -> LiquidityBias:
         """
         Direct computation from pre-calculated liquidity values.
@@ -312,11 +308,6 @@ class BacktestHeatmap:
             + (1 - self.ema_alpha) * self._smoothed_bias
         )
         score = max(-1.0, min(1.0, self._smoothed_bias))
-
-        # Estimate spread from candle range
-        spread_bps = 0.0
-        if close > 0:
-            spread_bps = (high - low) / close * 10000 * 0.1
 
         return LiquidityBias(
             score=score,
