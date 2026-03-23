@@ -208,10 +208,10 @@ def detect_divergence(
     ind_roll_low = indicator.rolling(lookback).min()
     
     # Previous window highs/lows
-    price_prev_high = price.shift(lookback).rolling(lookback).max()
-    price_prev_low = price.shift(lookback).rolling(lookback).min()
-    ind_prev_high = indicator.shift(lookback).rolling(lookback).max()
-    ind_prev_low = indicator.shift(lookback).rolling(lookback).min()
+    price_prev_high = price_roll_high.shift(lookback)
+    price_prev_low = price_roll_low.shift(lookback)
+    ind_prev_high = ind_roll_high.shift(lookback)
+    ind_prev_low = ind_roll_low.shift(lookback)
     
     # Bearish divergence: price higher high BUT indicator lower high
     bearish = (
