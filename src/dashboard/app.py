@@ -46,7 +46,7 @@ app.add_middleware(
 )
 
 
-from src.config import DATA_DIR, ASSETS_DIR, STATIC_DIR
+from src.config import DATA_DIR, STATIC_DIR
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 if STATIC_DIR.exists():
