@@ -5,7 +5,6 @@ Shares a single O1Client session across multiple traders to avoid conflicts.
 import asyncio
 import logging
 import sys
-import os
 from pathlib import Path
 
 # Add project root to path
@@ -15,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 from src.api.client import O1Client
 from src.config import load_config, load_active_config, load_coin_config
 from src.live.trader import LiveTrader
-from src.dashboard.app import update_state, _shutdown_requested, _is_paused
+from src.dashboard.app import update_state
 
 logging.basicConfig(
     level=logging.INFO,

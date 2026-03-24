@@ -8,7 +8,6 @@ Run: python -m src.dashboard.app
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import socket
@@ -17,23 +16,46 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from urllib.parse import urlparse
+
 import uvicorn
 
 # Add project root
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.config import load_config
 from src.data.storage import list_cached
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="MM Bot 01 Exchange Dashboard", version="0.2.0")
 
-from src.config import DATA_DIR, ASSETS_DIR, STATIC_DIR
+# Security: Add CORS middleware to prevent cross-origin requests from reading sensitive data
+# Note: origins are configured dynamically based on DASHBOARD_PORT and DASHBOARD_HOST
+_port = int(os.getenv("DASHBOARD_PORT", "8000"))
+_origins = [
+    f"http://127.0.0.1:{_port}",
+    f"http://localhost:{_port}",
+]
+# If bound to a specific IP, add it to allowed origins
+_host = os.getenv("DASHBOARD_HOST", "127.0.0.1")
+if _host not in ("0.0.0.0", "127.0.0.1", "localhost"):
+    _origins.append(f"http://{_host}:{_port}")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+from src.config import DATA_DIR, STATIC_DIR
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 if STATIC_DIR.exists():
@@ -157,15 +179,25 @@ async def get_volumes():
     return JSONResponse(_volume_data)
 
 
+def _check_local_access(request: Request):
+    """Restricts access to local clients only for sensitive endpoints."""
+    client_host = request.client.host if request.client else None
+    if client_host not in ("127.0.0.1", "localhost", "::1"):
+        logger.warning(f"Blocking external access to sensitive API from {client_host}")
+        raise HTTPException(status_code=403, detail="Access restricted to localhost")
+
+
 @app.get("/api/log")
-async def get_log():
+async def get_log(request: Request):
+    _check_local_access(request)
     log_snapshot = list(_activity_log)
     return JSONResponse({"log": log_snapshot[-100:]})
 
 
 @app.post("/api/control")
-async def control(action: dict):
+async def control(request: Request, action: dict):
     """Bot control: start, stop, update params."""
+    _check_local_access(request)
     cmd = action.get("command", "")
     if cmd == "stop":
         _bot_state["status"] = "idle"
@@ -181,6 +213,16 @@ async def control(action: dict):
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    # Security: Prevent Cross-Site WebSocket Hijacking (CSWSH)
+    origin = ws.headers.get("origin")
+    if origin:
+        parsed_origin = urlparse(origin)
+        host = ws.headers.get("host")
+        if host and parsed_origin.netloc != host:
+            logger.warning(f"Rejected WebSocket connection from unexpected origin: {origin}")
+            await ws.close(code=1008)
+            return
+
     await ws.accept()
     _ws_clients.append(ws)
     try:
@@ -275,6 +317,7 @@ def _add_log(msg: str):
 async def run_dashboard(cfg=None):
     """Run the dashboard server. Suitable for asyncio.gather."""
     port = int(os.getenv("DASHBOARD_PORT", "8000"))
+    host = os.getenv("DASHBOARD_HOST", "127.0.0.1")
     
     # Try to detect local network IP
     hostname = socket.gethostname()
@@ -285,12 +328,17 @@ async def run_dashboard(cfg=None):
 
     print("\n" + "="*50)
     print(f"🚀 DASHBOARD STARTED")
-    print(f"Local:   http://localhost:{port}")
-    if local_ip != "127.0.0.1":
-        print(f"Network: http://{local_ip}:{port}")
+    print(f"Host:    http://{host}:{port}")
+    if host == "0.0.0.0":
+        print(f"Local:   http://localhost:{port}")
+        if local_ip != "127.0.0.1":
+            print(f"Network: http://{local_ip}:{port}")
+        print("\n⚠️  SECURITY WARNING: Dashboard is exposed to the network (0.0.0.0)!")
+        print("This may allow unauthorized access to bot controls and sensitive data.")
+        print("Restrict to 127.0.0.1 for maximum security unless remote access is required.")
     print("="*50 + "\n")
 
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
+    config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     await server.serve()
 

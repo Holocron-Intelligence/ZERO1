@@ -26,6 +26,18 @@ class GridLevel:
 
 
 @dataclass
+class GridInput:
+    """Input parameters for generating a new grid."""
+    mid_price: float
+    atr_value: float
+    bias_score: float = 0.0
+    regime: str = "range"
+    base_size: float = 1.0
+    stop_atr_mult: float = 1.5
+    timestamp: float = 0.0
+
+
+@dataclass
 class GridState:
     """Current state of the adaptive grid."""
     levels: list[GridLevel] = field(default_factory=list)
@@ -71,46 +83,31 @@ class AdaptiveGrid:
         self.rebalance_threshold = rebalance_threshold
         self._current_grid: GridState | None = None
 
-    def generate(
-        self,
-        mid_price: float,
-        atr_value: float,
-        bias_score: float = 0.0,
-        regime: str = "range",
-        base_size: float = 1.0,
-        stop_atr_mult: float = 1.5,
-        timestamp: float = 0.0,
-    ) -> GridState:
+    def generate(self, params: GridInput) -> GridState:
         """
         Generate a new grid centered on mid_price.
 
         Args:
-            mid_price: Current mid price
-            atr_value: Current ATR value
-            bias_score: Heatmap bias [-1, +1]. Positive = bias long
-            regime: "range" or "trend"
-            base_size: Base position size per level
-            stop_atr_mult: Stop-loss distance in ATR multiples
-            timestamp: Current timestamp
+            params: GridInput dataclass containing all grid generation parameters
 
         Returns:
             GridState with all computed levels
         """
-        spacing = atr_value * self.spacing_atr_mult
+        spacing = params.atr_value * self.spacing_atr_mult
 
         if spacing <= 0:
-            spacing = mid_price * 0.001  # Fallback: 0.1% of price
+            spacing = params.mid_price * 0.001  # Fallback: 0.1% of price
 
         levels: list[GridLevel] = []
 
         for i in range(1, self.num_levels + 1):
             # ? Buy levels (below mid) ?
-            buy_price = mid_price - (spacing * i)
+            buy_price = params.mid_price - (spacing * i)
             buy_size = self._compute_size(
-                base_size, bias_score, side="BUY",
-                level_idx=i, regime=regime,
+                params.base_size, params.bias_score, side="BUY",
+                level_idx=i, regime=params.regime,
             )
-            buy_stop = buy_price - (atr_value * stop_atr_mult)
+            buy_stop = buy_price - (params.atr_value * params.stop_atr_mult)
 
             levels.append(GridLevel(
                 price=round(buy_price, 8),
@@ -120,12 +117,12 @@ class AdaptiveGrid:
             ))
 
             # ? Sell levels (above mid) ?
-            sell_price = mid_price + (spacing * i)
+            sell_price = params.mid_price + (spacing * i)
             sell_size = self._compute_size(
-                base_size, bias_score, side="SELL",
-                level_idx=i, regime=regime,
+                params.base_size, params.bias_score, side="SELL",
+                level_idx=i, regime=params.regime,
             )
-            sell_stop = sell_price + (atr_value * stop_atr_mult)
+            sell_stop = sell_price + (params.atr_value * params.stop_atr_mult)
 
             levels.append(GridLevel(
                 price=round(sell_price, 8),
@@ -140,11 +137,11 @@ class AdaptiveGrid:
 
         state = GridState(
             levels=levels,
-            mid_price=mid_price,
+            mid_price=params.mid_price,
             spacing=spacing,
-            regime=regime,
-            bias_score=bias_score,
-            timestamp=timestamp,
+            regime=params.regime,
+            bias_score=params.bias_score,
+            timestamp=params.timestamp,
         )
         self._current_grid = state
         return state

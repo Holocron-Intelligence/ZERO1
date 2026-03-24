@@ -184,6 +184,7 @@ cython_debug/
 # NEVER commit private keys!
 id.json
 *.pem
+*.key
 
 # Backtest data & reports
 data/
@@ -191,15 +192,29 @@ reports/
 
 # Runtime logs
 *.log
+logs/
 paper_trading.log
 launcher_ultra_stable.log
 
 # Build artifacts
 dist/
+build/
 *.exe
+*.spec
 
 # IDE
 .vscode/
+.idea/
+.kiro/
 
 # PnL results
-pnl_results.json
+pnl_results.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Nuitka build output
+*.build/
+*.dist/
+*.onefile-build/

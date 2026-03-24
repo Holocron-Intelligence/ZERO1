@@ -62,6 +62,7 @@ class O1Client:
         self._user_pubkey: bytes | None = None
         self._markets: dict[str, MarketInfo] = {}
         self._nonce_counter = 0
+        self._nonce_lock = asyncio.Lock()  # Protect nonce increments
         self._lock = asyncio.Lock()  # Prevent concurrent session creation
         self.stats = {
             "api_calls_total": 0,
@@ -210,6 +211,12 @@ class O1Client:
     def is_authenticated(self) -> bool:
         return self._session_id is not None
 
+    async def _next_nonce(self) -> int:
+        """Thread-safe nonce increment."""
+        async with self._nonce_lock:
+            self._nonce_counter += 1
+            return self._nonce_counter
+
     def _user_sign(self, message: bytes) -> bytes:
         return self._user_key.sign(message)
 
@@ -270,8 +277,7 @@ class O1Client:
         
         action = schema_pb2.Action()
         action.current_timestamp = server_time
-        self._nonce_counter += 1
-        action.nonce = self._nonce_counter
+        action.nonce = await self._next_nonce()
         
         action.create_session.CopyFrom(
             schema_pb2.Action.CreateSession(
@@ -295,7 +301,8 @@ class O1Client:
             return str(self._session_id)
 
     async def place_order(self, market_id: int, side: str, size: float,
-                    price: float, order_type: str = "limit", reduce_only: bool = False) -> OrderResult:
+                    price: float, order_type: str = "limit", reduce_only: bool = False,
+                    _session_retry: int = 0) -> OrderResult:
         """Place an order using authenticated Protobuf Action."""
         if not self.is_authenticated():
             await self.create_session()
@@ -324,8 +331,7 @@ class O1Client:
             
         action = schema_pb2.Action()
         action.current_timestamp = server_time
-        self._nonce_counter += 1
-        action.nonce = self._nonce_counter
+        action.nonce = await self._next_nonce()
         
         action.place_order.CopyFrom(
             schema_pb2.Action.PlaceOrder(
@@ -347,9 +353,11 @@ class O1Client:
             except Exception:
                 pass
             if "SESSION" in error_name.upper():
+                if _session_retry >= 2:
+                    raise RuntimeError(f"Session refresh failed after max retries: {error_name}")
                 logger.warning(f"Session expired ({error_name}), recreating...")
                 self._session_id = None
-                return await self.place_order(market_id, side, size, price, order_type, reduce_only)
+                return await self.place_order(market_id, side, size, price, order_type, reduce_only, _session_retry + 1)
             raise RuntimeError(f"Order placement rejected: {error_name}")
             
         result = receipt.trade_or_place
@@ -379,8 +387,7 @@ class O1Client:
             
         action = schema_pb2.Action()
         action.current_timestamp = server_time
-        self._nonce_counter += 1
-        action.nonce = self._nonce_counter
+        action.nonce = await self._next_nonce()
         
         action.cancel_order_by_id.CopyFrom(
             schema_pb2.Action.CancelOrderById(

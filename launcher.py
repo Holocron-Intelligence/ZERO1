@@ -122,14 +122,16 @@ class UltraStableLauncher(ctk.CTk):
 
         self.status_label = ctk.CTkLabel(container, text="READY TO INITIALIZE", text_color="#00E5FF", font=("Segoe UI", 12, "bold"))
         self.status_label.pack(pady=(5, 5))
-
         self.start_btn = ctk.CTkButton(container, text="INITIALIZE BOT (AVVIA)", font=("Segoe UI", 18, "bold"), height=55, fg_color="#00FF66", text_color="#000000", hover_color="#00CC55", command=self.on_start)
         self.start_btn.pack(fill="x", padx=40, pady=(5, 20))
 
     def create_monitor_widgets(self, container):
         # Status Banner
         self.status_banner = ctk.CTkLabel(container, text="ENGINE OFFLINE", font=("Segoe UI", 24, "bold"), height=60, fg_color="#333333", text_color="#FFFFFF")
-        self.status_banner.pack(fill="x", padx=20, pady=(20, 10))
+        self.status_banner.pack(fill="x", padx=20, pady=(20, 5))
+
+        self.status_val = ctk.CTkLabel(container, text="IDLE", font=("Segoe UI", 11), text_color="#888888")
+        self.status_val.pack(pady=(0, 5))
 
         # Stats Grid
         stats_frame = ctk.CTkFrame(container, fg_color="transparent")
@@ -155,8 +157,7 @@ class UltraStableLauncher(ctk.CTk):
 
         # Control Buttons Frame
         btn_frame = ctk.CTkFrame(container, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=10, padx=20)
-        
+        btn_frame.pack(fill="x", pady=10, padx=20)        
         self.pause_btn = ctk.CTkButton(btn_frame, text="PAUSE BOT", font=("Segoe UI", 14, "bold"), height=45, fg_color="#FFD700", text_color="#000000", hover_color="#CCAC00", state="disabled", command=self.on_pause)
         self.pause_btn.pack(side="left", fill="x", expand=True, padx=(0, 5))
         

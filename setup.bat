@@ -39,10 +39,11 @@ if %errorlevel% neq 0 (
 
 :: 4. Finalizing
 echo [3/4] Readying the bot...
-if not exist id.json (
-    copy id.json.example id.json >nul
-    echo [OK] Created id.json template.
+if not exist .env (
+    copy .env.example .env >nul
+    echo [OK] Created .env from template.
 )
+echo [OK] Setup complete. Add your private key to id.json before live trading.
 
 echo.
 echo ############################################

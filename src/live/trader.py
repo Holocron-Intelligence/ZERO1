@@ -79,7 +79,7 @@ class LiveTrader:
         # Map symbol -> market_id for REST polling
         self.market_ids: Dict[str, int] = {}
         self.last_trade_times: Dict[str, int] = {}
-        self.market_decimals: Dict[str, tuple[int, int]] = {} # (price_dec, size_dec)
+        self.market_decimals: Dict[str, tuple[int, int, int, int]] = {} # (price_dec, size_dec, factor, price_factor)
         
         # External clients
         self.binance: BinanceDataClient = BinanceDataClient()
@@ -88,6 +88,7 @@ class LiveTrader:
         # Paper trading global state
         self.initial_balance = config.capital
         self.balance = config.capital
+        self._balance_lock = asyncio.Lock()  # Protect concurrent balance modifications
         self.trades_today = 0
         self.halted = False
         
@@ -154,7 +155,9 @@ class LiveTrader:
                     continue
                     
                 self.market_ids[symbol] = mi.market_id
-                self.market_decimals[symbol] = (mi.price_decimals, mi.size_decimals) # type: ignore
+                price_dec = mi.price_decimals # type: ignore
+                size_dec = mi.size_decimals # type: ignore
+                self.market_decimals[symbol] = (price_dec, size_dec, 10 ** size_dec, 10 ** price_dec)
                 self.aggregators[symbol] = CandleAggregator(self.config.timeframe)
                 self.mm_states[symbol] = MMSymbolState()
                 self.last_trade_times[symbol] = 0
@@ -221,14 +224,14 @@ class LiveTrader:
                 return
             
             candles = []
-            for ts, row in df.iterrows():
+            for row in df.itertuples(index=True):
                 candles.append(Candle(
-                    timestamp=ts, # type: ignore
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
-                    volume=float(row["volume"])
+                    timestamp=row.Index, # type: ignore
+                    open=float(row.open),
+                    high=float(row.high),
+                    low=float(row.low),
+                    close=float(row.close),
+                    volume=float(row.volume)
                 ))
             
             self.aggregators[symbol].preload(candles)
@@ -306,7 +309,9 @@ class LiveTrader:
                 size_raw = 0.0
             size = float(size_raw)
             
-            completed_candle = self.aggregators[symbol].update(price, size, dt)
+            # CandleAggregator expects millisecond int timestamp
+            ts_ms = int(dt.timestamp() * 1000)
+            completed_candle = self.aggregators[symbol].update(price, size, ts_ms)
             if completed_candle:
                 asyncio.create_task(self._on_candle_close(symbol))
             
@@ -452,10 +457,8 @@ class LiveTrader:
 
         half_spread = current_price * (spread_bps / 10000)
 
-        price_dec, size_dec = self.market_decimals[symbol]
-        factor = 10 ** size_dec
+        price_dec, size_dec, factor, price_factor = self.market_decimals[symbol]
         min_size = 1.0 / factor
-        price_factor = 10 ** price_dec
         min_tick = 1.0 / price_factor
         
         max_inv = self.balance * (mm_cfg.max_inventory_pct / 100)
@@ -617,9 +620,7 @@ class LiveTrader:
                 await asyncio.gather(*cancels, return_exceptions=True)
                 await asyncio.sleep(0.3)
                 
-            price_dec, size_dec = self.market_decimals[symbol]
-            factor = 10 ** size_dec
-            price_factor = 10 ** price_dec
+            price_dec, size_dec, factor, price_factor = self.market_decimals[symbol]
             size = int(size * factor) / factor
             
             side = "SELL" if state.inventory > 0 else "BUY"
@@ -639,18 +640,18 @@ class LiveTrader:
             pnl = (price - state.avg_entry) * size
         else:
             pnl = (state.avg_entry - price) * size
-            
+
         fee = size * price * fee_pct
-        
-        state.realized_pnl += pnl
-        state.fees_paid += fee
-        self.balance += (pnl - fee)
-        
-        trade_vol = size * price
-        state.volume += trade_vol
-        state.trades_count += 1
-        self.trades_today += 1
-        
+
+        async with self._balance_lock:
+            state.realized_pnl += pnl
+            state.fees_paid += fee
+            self.balance += (pnl - fee)
+            trade_vol = size * price
+            state.volume += trade_vol
+            state.trades_count += 1
+            self.trades_today += 1
+
         update_volume(symbol, trade_vol, pnl, fee)
         logger.info(f"[{symbol}] Market Closed {size:.4f} @ {price:.4f} PNL: ${pnl:.2f} Fee: ${fee:.4f}")
         
@@ -699,76 +700,69 @@ class LiveTrader:
         state = self.mm_states[symbol]
         if state.buy_size <= 0 and state.sell_size <= 0:
             return
-            
-        fee_pct = self.config.fees.maker_fee_pct / 100
-        slippage = self.config.backtest.slippage_bps / 10000
 
+        # Maker (post-only) orders fill at the limit price — no adverse slippage
         if state.buy_size > 0 and current_price <= state.buy_price:
-            fill_price = state.buy_price * (1 + slippage)
-            self._execute_fill(symbol, "BUY", fill_price, state.buy_size, fee_pct)
+            await self._execute_fill(symbol, "BUY", state.buy_price, state.buy_size)
             state.buy_size = 0
             state.candles_in_position = 0
 
         elif state.sell_size > 0 and current_price >= state.sell_price:
-            fill_price = state.sell_price * (1 - slippage)
-            self._execute_fill(symbol, "SELL", fill_price, state.sell_size, fee_pct)
+            await self._execute_fill(symbol, "SELL", state.sell_price, state.sell_size)
             state.sell_size = 0
             state.candles_in_position = 0
 
-    def _execute_fill(self, symbol: str, side: str, price: float, size: float, fee_pct: float):
+    async def _execute_fill(self, symbol: str, side: str, price: float, size: float):
         state = self.mm_states[symbol]
+        fee_pct = self.config.fees.maker_fee_pct / 100
         fee = size * price * fee_pct
         trade_vol = size * price
-        
-        state.fees_paid += fee
-        self.balance -= fee
-        state.volume += trade_vol
-        state.trades_count += 1
-        self.trades_today += 1
-        
-        pnl = 0.0
 
-        if side == "BUY":
-            if state.inventory < 0:
-                close_size = min(size, abs(state.inventory))
-                pnl = (state.avg_entry - price) * close_size
-                state.realized_pnl += pnl
-                self.balance += pnl
-                
-                remaining = size - close_size
-                if close_size >= abs(state.inventory):
-                    state.inventory = remaining
-                    state.avg_entry = price if remaining > 0 else 0
-                else:
-                    state.inventory += size
-            else:
-                total_inv = state.inventory + size
-                state.avg_entry = (state.avg_entry * state.inventory + price * size) / total_inv
-                state.inventory = total_inv
-                
-            logger.info(f"[{symbol}] MM BUY Fill {size:.4f} @ {price:.4f} PNL: ${pnl:.2f}")
-            update_volume(symbol, trade_vol, pnl, fee)
+        async with self._balance_lock:
+            state.fees_paid += fee
+            self.balance -= fee
+            state.volume += trade_vol
+            state.trades_count += 1
+            self.trades_today += 1
 
-        elif side == "SELL":
-            if state.inventory > 0:
-                close_size = min(size, state.inventory)
-                pnl = (price - state.avg_entry) * close_size
-                state.realized_pnl += pnl
-                self.balance += pnl
-                
-                remaining = size - close_size
-                if close_size >= state.inventory:
-                    state.inventory = -remaining
-                    state.avg_entry = price if remaining > 0 else 0
+            pnl = 0.0
+
+            if side == "BUY":
+                if state.inventory < 0:
+                    close_size = min(size, abs(state.inventory))
+                    pnl = (state.avg_entry - price) * close_size
+                    state.realized_pnl += pnl
+                    self.balance += pnl
+                    remaining = size - close_size
+                    if close_size >= abs(state.inventory):
+                        state.inventory = remaining
+                        state.avg_entry = price if remaining > 0 else 0
+                    else:
+                        state.inventory += size
                 else:
-                    state.inventory -= size
-            else:
-                total_inv = abs(state.inventory) + size
-                state.avg_entry = (state.avg_entry * abs(state.inventory) + price * size) / total_inv
-                state.inventory = -total_inv
-                
-            logger.info(f"[{symbol}] MM SELL Fill {size:.4f} @ {price:.4f} PNL: ${pnl:.2f}")
-            update_volume(symbol, trade_vol, pnl, fee)
+                    total_inv = state.inventory + size
+                    state.avg_entry = (state.avg_entry * state.inventory + price * size) / total_inv
+                    state.inventory = total_inv
+
+            elif side == "SELL":
+                if state.inventory > 0:
+                    close_size = min(size, state.inventory)
+                    pnl = (price - state.avg_entry) * close_size
+                    state.realized_pnl += pnl
+                    self.balance += pnl
+                    remaining = size - close_size
+                    if close_size >= state.inventory:
+                        state.inventory = -remaining
+                        state.avg_entry = price if remaining > 0 else 0
+                    else:
+                        state.inventory -= size
+                else:
+                    total_inv = abs(state.inventory) + size
+                    state.avg_entry = (state.avg_entry * abs(state.inventory) + price * size) / total_inv
+                    state.inventory = -total_inv
+
+        logger.info(f"[{symbol}] MM {side} Fill {size:.4f} @ {price:.4f} PNL: ${pnl:.2f}")
+        update_volume(symbol, trade_vol, pnl, fee)
 
     async def _cancel_all_orders(self):
         """Emergency method to cancel all known active orders."""

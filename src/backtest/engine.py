@@ -22,7 +22,7 @@ from src.risk.manager import (
     compute_position_size,
     compute_stop_loss,
 )
-from src.strategy.grid import AdaptiveGrid, GridLevel, GridState
+from src.strategy.grid import AdaptiveGrid, GridInput, GridLevel, GridState
 from src.strategy.regime import RegimeDetector, RegimeState
 from src.strategy.signals import SignalPipeline, Signal
 
@@ -75,6 +75,39 @@ class Position:
         else:
             self.unrealized_pnl = (self.avg_entry - current_price) * self.size
         return self.unrealized_pnl
+
+    def add(self, side: str, size: float, price: float, stop: float) -> None:
+        """Add to or create a position."""
+        if size <= 0:
+            return
+
+        if not self.is_open:
+            self.side = side
+            self.size = size
+            self.avg_entry = price
+            self.stop_loss = stop
+        elif self.side == side:
+            # Add to existing -> weighted average entry
+            total_size = self.size + size
+            self.avg_entry = (
+                (self.avg_entry * self.size + price * size) / total_size
+            )
+            self.size = total_size
+            # Keep the tightest stop
+            if side == "LONG":
+                self.stop_loss = max(self.stop_loss, stop)
+            else:
+                self.stop_loss = min(self.stop_loss, stop)
+        else:
+            # Opposite side -> close or reduce
+            if size >= self.size:
+                # Fully close + reverse
+                self.side = side
+                self.size = size - self.size
+                self.avg_entry = price
+                self.stop_loss = stop
+            else:
+                self.size -= size
 
 
 # ? Backtest Engine ?
@@ -184,9 +217,10 @@ class BacktestEngine:
         equity: list[float] = []
         total_fees = 0.0
         current_grid: GridState | None = None
+        pending_grid: GridState | None = None  # Grid generated this candle, active next candle
 
-        # Initialize drawdown monitor
-        dd_monitor.initialize(capital, timestamp=0)
+        # Initialize drawdown monitor with real wall-clock time
+        dd_monitor.initialize(capital, timestamp=None)
 
         # Skip warmup period (need indicators to populate)
         warmup = max(
@@ -229,6 +263,11 @@ class BacktestEngine:
                 equity.append(capital)
                 continue
 
+            # Promote grid generated on previous candle — prevents lookahead bias
+            if pending_grid is not None:
+                current_grid = pending_grid
+                pending_grid = None
+
             # Check if halted
             if dd_monitor.state.is_halted:
                 # Close any open position
@@ -266,7 +305,11 @@ class BacktestEngine:
             liq_above = float(np.sum(window_weighted[mask_above]))
             liq_below = float(np.sum(window_weighted[~mask_above]))
             
-            bias = heatmap.compute_direct(liq_above, liq_below, close, high, low)
+            spread_bps = 0.0
+            if close > 0:
+                spread_bps = (high - low) / close * 10000 * 0.1
+
+            bias = heatmap.compute_direct(liq_above, liq_below, spread_bps)
 
             # ? 4. Evaluate regime + signals ?
             regime = regime_det.detect(
@@ -312,6 +355,7 @@ class BacktestEngine:
                     dd_monitor.record_trade(pnl - fee)
                     position = Position()
                     current_grid = None
+                    pending_grid = None
 
             # ? 2. Check grid fills ?
             if current_grid is not None:
@@ -351,8 +395,8 @@ class BacktestEngine:
                             dd_monitor.record_trade(realized_pnl - fee)
 
                         # Update position
-                        self._add_to_position(
-                            position, target_side, level.size,
+                        position.add(
+                            target_side, level.size,
                             fill_price, level.stop_loss,
                         )
 
@@ -390,6 +434,7 @@ class BacktestEngine:
                         dd_monitor.record_trade(pnl - fee)
                         position = Position()
                         current_grid = None
+                        pending_grid = None
                 elif position.side == "SHORT":
                     tp_price = position.avg_entry - tp_distance
                     if low <= tp_price:
@@ -407,6 +452,7 @@ class BacktestEngine:
                         dd_monitor.record_trade(pnl - fee)
                         position = Position()
                         current_grid = None
+                        pending_grid = None
 
             # ? 5. Update unrealized P&L ?
             if position.is_open:
@@ -414,8 +460,8 @@ class BacktestEngine:
 
             # ? 6. Rebalance grid if needed ?
             should_rebalance = (
-                current_grid is None
-                or grid_gen.needs_rebalance(close)
+                (current_grid is None and pending_grid is None)
+                or (current_grid is not None and grid_gen.needs_rebalance(close))
             )
 
             if should_rebalance and not signal.is_neutral:
@@ -434,31 +480,31 @@ class BacktestEngine:
                     max_position_pct=cfg.risk.max_position_pct,
                 )
 
-                # Apply signal weights
                 base_size = sizing.size_base / cfg.grid.levels  # Per level
 
-                current_grid = grid_gen.generate(
+                pending_grid = grid_gen.generate(GridInput(
                     mid_price=close,
                     atr_value=atr_val,
                     bias_score=bias.score if not bias.is_anomalous else 0.0,
                     regime=regime.regime,
                     base_size=base_size,
                     stop_atr_mult=stop_mult,
-                )
+                ))
 
                 # Apply signal filter: remove blocked sides
                 if not signal.allow_long:
-                    for lvl in current_grid.levels:
+                    for lvl in pending_grid.levels:
                         if lvl.side == "BUY":
                             lvl.size = 0
                 if not signal.allow_short:
-                    for lvl in current_grid.levels:
+                    for lvl in pending_grid.levels:
                         if lvl.side == "SELL":
                             lvl.size = 0
 
             # ? 7. Update drawdown ?
             total_value = capital + position.unrealized_pnl
-            dd_monitor.update(total_value, timestamp=i)
+            ts_unix = ts.timestamp() if hasattr(ts, "timestamp") else float(i)
+            dd_monitor.update(total_value, timestamp=ts_unix)
 
             equity.append(total_value)
 
@@ -511,42 +557,6 @@ class BacktestEngine:
         )
         return pnl
 
-    def _add_to_position(
-        self, position: Position, side: str, size: float,
-        price: float, stop: float,
-    ) -> None:
-        """Add to or create a position."""
-        if size <= 0:
-            return
-
-        if not position.is_open:
-            position.side = side
-            position.size = size
-            position.avg_entry = price
-            position.stop_loss = stop
-        elif position.side == side:
-            # Add to existing ? weighted average entry
-            total_size = position.size + size
-            position.avg_entry = (
-                (position.avg_entry * position.size + price * size) / total_size
-            )
-            position.size = total_size
-            # Keep the tightest stop
-            if side == "LONG":
-                position.stop_loss = max(position.stop_loss, stop)
-            else:
-                position.stop_loss = min(position.stop_loss, stop)
-        else:
-            # Opposite side ? close or reduce
-            if size >= position.size:
-                # Fully close + reverse
-                position.side = side
-                position.size = size - position.size
-                position.avg_entry = price
-                position.stop_loss = stop
-            else:
-                position.size -= size
-
     def _compute_metrics(
         self,
         equity_series: pd.Series,
@@ -588,12 +598,13 @@ class BacktestEngine:
         # Returns for Sharpe/Sortino
         returns = equity_series.pct_change().dropna()
 
+        # Annualization factor computed once — used by both Sharpe and Sortino
+        tf_minutes = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
+        minutes = tf_minutes.get(timeframe, 5)
+        periods_per_year = 365 * 24 * 60 / minutes
+
         # Sharpe ratio (annualized)
         if len(returns) > 1 and returns.std() > 0:
-            # Annualization factor: depends on timeframe
-            tf_minutes = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
-            minutes = tf_minutes.get(timeframe, 5)
-            periods_per_year = 365 * 24 * 60 / minutes
             sharpe = returns.mean() / returns.std() * np.sqrt(periods_per_year)
         else:
             sharpe = 0.0

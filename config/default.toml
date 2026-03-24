@@ -3,11 +3,19 @@ capital = 100.0                    # [USD] Starting capital for sizing calculati
 timeframe = "1m"                  # Candle timeframe: 1m (faster), 3m, 5m (more stable)
 paper_mode = true                 # SET TO FALSE FOR REAL TRADING
 
+[market_maker]
+spread_bps = 8.0                  # Distance from mid-price (basis points)
 min_spread_bps = 5                # Never go below this spread
-fixed_tp_bps = 3                    # Profit target per trade
+fixed_tp_bps = 3                  # Profit target per trade
+order_size_pct = 10.0             # % of capital per order
+max_inventory_pct = 80.0          # Max inventory as % of capital
 inventory_skew_factor = 0.5       # How aggressively to reduce position bias
 stop_loss_bps = 35                # Hard stop distance
 volatility_pause_mult = 1.5       # Halt trading if volatility > 1.5x average
+use_atr_spread = true             # Use ATR-based spread calculation
+atr_spread_mult = 0.4             # ATR multiplier for spread
+tp_atr_mult = 1.5                 # Take-profit in ATR multiples
+stale_candles = 20                # Close position after N candles
 
 [grid]
 levels = 8                        # Number of orders on each side

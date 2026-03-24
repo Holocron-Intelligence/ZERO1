@@ -1,2 +1,25 @@
 # Auto detect text files and perform LF normalization
-* text=auto
+* text=auto eol=lf
+
+# Python
+*.py text eol=lf
+*.pyi text eol=lf
+
+# Config
+*.toml text eol=lf
+*.env text eol=lf
+*.md text eol=lf
+
+# Windows scripts — keep CRLF
+*.bat text eol=crlf
+
+# Binaries — no line ending conversion
+*.jpg binary
+*.png binary
+*.ico binary
+*.exe binary
+*.so binary
+*.pyd binary
+
+# Protobuf generated — treat as binary to avoid diffs
+*_pb2.py binary

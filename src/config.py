@@ -57,7 +57,6 @@ STATIC_DIR = BUNDLE_DIR / "src" / "dashboard" / "static"
 
 @dataclass
 class MarketMakerConfig:
-# ... (same as before) ...
     spread_bps: float = 30.0
     order_size_pct: float = 60.0
     max_inventory_pct: float = 80.0
@@ -180,8 +179,7 @@ def _flat_to_dataclass(data: dict[str, Any], cls: Any) -> Any:
 def load_config(path: Path | None = None) -> Config:
     """Load config from TOML file + environment overrides, with bundled fallback."""
     import shutil
-    import tomllib
-    
+
     load_dotenv()
     
     ext_path = path or CONFIG_DIR / "default.toml"

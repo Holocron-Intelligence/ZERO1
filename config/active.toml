@@ -1,14 +1,7 @@
 [active]
-# ── Tier A: Volume Farming — tight spread, high fill rate (75% capital) ──────
-SOLUSD     = 0.15
-HYPEUSD    = 0.15
-XRPUSD     = 0.15
-ARBUSD     = 0.15
-ENAUSD     = 0.15
-
-# ── Tier B: Profit Farming — wide spread, 1 bp net profit per trade (25%) ────
-SUIUSD     = 0.05
-APTUSD     = 0.05
-AAVEUSD    = 0.05
-JUPUSD     = 0.05
-VIRTUALUSD = 0.05
+# 5 coins selected for paper test — high liquidity, normalized weights
+SOLUSD  = 0.20
+HYPEUSD = 0.20
+XRPUSD  = 0.20
+SUIUSD  = 0.20
+ARBUSD  = 0.20

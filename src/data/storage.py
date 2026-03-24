@@ -1,8 +1,9 @@
 import json
 import os
+from pathlib import Path
 import pandas as pd
 
-DATA_DIR = "./data"
+DATA_DIR = str(Path(__file__).resolve().parent.parent.parent / "data")
 
 def save_candles(symbol: str, timeframe: str, df: pd.DataFrame):
     os.makedirs(DATA_DIR, exist_ok=True)
