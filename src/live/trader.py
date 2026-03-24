@@ -18,7 +18,7 @@ from src.indicators.core import compute_all # type: ignore
 from src.data.binance import BinanceDataClient, o1_to_binance # type: ignore
 from src.risk.manager import DrawdownMonitor # type: ignore
 
-from src.dashboard.app import update_state, update_volume
+from src.dashboard.app import update_state, update_volume, add_fill, update_orders, register_trader, update_trader
 from src.strategy.signals import SignalPipeline, Signal
 from src.strategy.regime import RegimeDetector, RegimeState
 from src.heatmap.engine import BacktestHeatmap, LiquidityBias
@@ -88,9 +88,12 @@ class LiveTrader:
         # Paper trading global state
         self.initial_balance = config.capital
         self.balance = config.capital
-        self._balance_lock = asyncio.Lock()  # Protect concurrent balance modifications
+        self._balance_lock = asyncio.Lock()
         self.trades_today = 0
         self.halted = False
+        self._start_time = time.time()
+        # Register this trader instance with the dashboard aggregator
+        self._trader_id = ",".join(sorted(config.active_symbols))
         
         # Strategy Pipeline
         self.signal_pipeline = SignalPipeline(config.indicators)
@@ -137,6 +140,7 @@ class LiveTrader:
         logger.info(f"AUDIT - Active Symbols: {self.config.active_symbols}")
         
         # Push initial capital and status to dashboard immediately
+        register_trader(self._trader_id, self.initial_balance)
         update_state(
             status="running",
             performance={
@@ -224,9 +228,9 @@ class LiveTrader:
                 return
             
             candles = []
-            for row in df.itertuples(index=True):
+            for row in df.itertuples(index=False):
                 candles.append(Candle(
-                    timestamp=row.Index, # type: ignore
+                    timestamp=int(row.timestamp),  # ms epoch int
                     open=float(row.open),
                     high=float(row.high),
                     low=float(row.low),
@@ -763,6 +767,7 @@ class LiveTrader:
 
         logger.info(f"[{symbol}] MM {side} Fill {size:.4f} @ {price:.4f} PNL: ${pnl:.2f}")
         update_volume(symbol, trade_vol, pnl, fee)
+        add_fill(symbol, side, price, size, pnl, fee)
 
     async def _cancel_all_orders(self):
         """Emergency method to cancel all known active orders."""
@@ -810,28 +815,30 @@ class LiveTrader:
         total_value = self.balance + unrealized
         total_volume = sum(state.volume for state in self.mm_states.values())
 
-        perf = {
-            "capital": total_value,
-            "initial_capital": self.initial_balance,
-            "pnl_today": total_value - self.initial_balance,
-            "total_return_pct": ((total_value / self.initial_balance) - 1) * 100 if self.initial_balance else 0,
-            "trades_today": self.trades_today,
-            "volume": total_volume,
-            "api_calls_total": self.client.stats["api_calls_total"],
-            "api_calls_failed": self.client.stats["api_calls_failed"],
-            "orders_placed": self.client.stats["orders_placed"],
-            "orders_cancelled": self.client.stats["orders_cancelled"],
-        }
-        
-        sig_info = { "regime": "market_making", "bias_score": 0.0 }
-        
+        # Build orders list
+        orders_list = []
+        for sym, state in self.mm_states.items():
+            if state.buy_size > 0 and state.buy_price > 0:
+                orders_list.append({"symbol": sym, "side": "BUY", "price": state.buy_price, "size": state.buy_size})
+            if state.sell_size > 0 and state.sell_price > 0:
+                orders_list.append({"symbol": sym, "side": "SELL", "price": state.sell_price, "size": state.sell_size})
+        update_orders(orders_list)
+
+        # Push this trader's data to the aggregator (not overwriting other traders)
+        update_trader(
+            trader_id=self._trader_id,
+            balance=self.balance,
+            trades=self.trades_today,
+            unrealized=unrealized,
+            positions=positions_list,
+            orders=orders_list,
+        )
+
         state_str = "halted" if self.halted else "running"
         update_state(
             status=state_str,
-            performance=perf,
-            signal=sig_info,
-            positions=positions_list,
-            paper_mode=self.config.paper_mode
+            signal={"regime": "market_making", "bias_score": 0.0},
+            paper_mode=self.config.paper_mode,
         )
 
 if __name__ == "__main__":

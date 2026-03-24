@@ -52,7 +52,7 @@
                 <div class="card">
                     <div class="stat-title">Fills / Rate</div>
                     <div class="stat-value" id="stat-trades">0</div>
-                    <div style="font-size: 10px; color: var(--text-muted); margin-top: 5px;">Rate: <span id="stat-fillrate">0.0%</span></div>
+                    <div style="font-size: 10px; color: var(--text-muted); margin-top: 5px;">Rate: <span id="stat-fillrate">0.0/h</span></div>
                 </div>
 
                 <div class="card">
@@ -72,6 +72,7 @@
                         <div style="text-align: right; font-size: 12px;">
                             <div>Target: <span id="vol-target" style="color: var(--accent);">$100,000</span></div>
                             <div>Progress: <span id="vol-progress" style="color: var(--accent);">0.0%</span></div>
+                            <div>Rate: <span id="vol-rate" style="color: var(--text-muted);">0/h</span></div>
                         </div>
                     </div>
                     <div class="progress-bar">
@@ -114,6 +115,21 @@
                     <div class="stat-title">Engine Activity Log</div>
                     <div id="log-list" style="max-height: 150px; overflow-y: auto; font-family: var(--mono); font-size: 11px; color: var(--text-secondary);">
                         <div style="padding: 4px 0;">[SYSTEM] Initializing high-speed connection...</div>
+                    </div>
+                </div>
+
+                <!-- Charts -->
+                <div class="card" style="grid-column: span 4;">
+                    <div class="stat-title" style="margin-bottom: 14px;">📈 Live Charts</div>
+                    <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;" id="chart-tabs">
+                        <button class="chart-tab active" onclick="switchChart('SOLUSDT', this)">SOL</button>
+                        <button class="chart-tab" onclick="switchChart('HYPEUSD', this)">HYPE</button>
+                        <button class="chart-tab" onclick="switchChart('XRPUSDT', this)">XRP</button>
+                        <button class="chart-tab" onclick="switchChart('SUIUSDT', this)">SUI</button>
+                        <button class="chart-tab" onclick="switchChart('ARBUSDT', this)">ARB</button>
+                    </div>
+                    <div id="tv-chart-container" style="height: 420px; border-radius: 8px; overflow: hidden;">
+                        <!-- TradingView widget injected here -->
                     </div>
                 </div>
             </main>

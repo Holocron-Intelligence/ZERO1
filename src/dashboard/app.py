@@ -135,11 +135,86 @@ _volume_data: dict[str, Any] = {
     "start_time": None,
 }
 
+# ── Per-trader registry (aggregated by dashboard) ────────────────────────────
+
+_trader_registry: dict[str, dict] = {}  # trader_id -> {balance, initial, trades, unrealized, positions, orders}
+
+def register_trader(trader_id: str, initial_balance: float):
+    """Called once per trader at startup."""
+    _trader_registry[trader_id] = {
+        "balance": initial_balance,
+        "initial": initial_balance,
+        "trades": 0,
+        "unrealized": 0.0,
+        "positions": [],
+        "orders": [],
+        "start_time": time.time(),
+    }
+
+def update_trader(trader_id: str, balance: float, trades: int, unrealized: float,
+                  positions: list, orders: list):
+    """Called every 2s by each LiveTrader instance."""
+    if trader_id not in _trader_registry:
+        return
+    r = _trader_registry[trader_id]
+    r["balance"]    = balance
+    r["trades"]     = trades
+    r["unrealized"] = unrealized
+    r["positions"]  = positions
+    r["orders"]     = orders
+
+def _aggregate_performance() -> dict:
+    """Sum across all registered traders."""
+    if not _trader_registry:
+        return _performance
+
+    total_balance  = sum(r["balance"]    for r in _trader_registry.values())
+    total_initial  = sum(r["initial"]    for r in _trader_registry.values())
+    total_trades   = sum(r["trades"]     for r in _trader_registry.values())
+    total_unrl     = sum(r["unrealized"] for r in _trader_registry.values())
+    total_equity   = total_balance + total_unrl
+
+    # fills/hour based on oldest trader start time
+    oldest = min(r["start_time"] for r in _trader_registry.values())
+    elapsed_h = max((time.time() - oldest) / 3600, 0.001)
+    fills_per_hour = total_trades / elapsed_h
+
+    return {
+        "capital":          total_equity,
+        "balance":          total_balance,
+        "initial_capital":  total_initial,
+        "pnl_today":        total_balance - total_initial,
+        "unrealized_pnl":   total_unrl,
+        "total_return_pct": ((total_balance / total_initial) - 1) * 100 if total_initial else 0,
+        "trades_today":     total_trades,
+        "fill_rate_pct":    fills_per_hour,
+        "volume":           _volume_data["total"],
+        "api_calls_total":  _performance.get("api_calls_total", 0),
+        "api_calls_failed": _performance.get("api_calls_failed", 0),
+        "orders_placed":    _performance.get("orders_placed", 0),
+        "orders_cancelled": _performance.get("orders_cancelled", 0),
+    }
+
+def _aggregate_positions() -> list:
+    pos = []
+    for r in _trader_registry.values():
+        pos.extend(r["positions"])
+    return pos
+
+def _aggregate_orders() -> list:
+    orders = []
+    for r in _trader_registry.values():
+        orders.extend(r["orders"])
+    return orders
+
+
 _activity_log: list[dict[str, Any]] = []
 _ws_clients: list[WebSocket] = []
+_fills: list[dict[str, Any]] = []
+_orders: list[dict[str, Any]] = []
 
 
-# ? REST Endpoints ?
+# ── REST Endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -232,12 +307,18 @@ async def websocket_endpoint(ws: WebSocket):
                 elapsed = time.time() - _volume_data["start_time"]
                 _volume_data["uptime_hours"] = elapsed / 3600
 
+            # Use aggregated data if traders are registered, else fallback
+            perf = _aggregate_performance() if _trader_registry else _performance
+            pos  = _aggregate_positions()   if _trader_registry else _positions
+
             await ws.send_json({
-                "bot": _bot_state,
-                "signal": _current_signal,
-                "performance": _performance,
-                "positions": _positions,
-                "volumes": _volume_data,
+                "bot":         _bot_state,
+                "signal":      _current_signal,
+                "performance": perf,
+                "positions":   pos,
+                "volumes":     _volume_data,
+                "fills":       _fills[:100],
+                "orders":      _aggregate_orders() if _trader_registry else _orders,
             })
             await asyncio.sleep(1)
     except WebSocketDisconnect:
@@ -273,13 +354,12 @@ def update_state(
     if positions is not None:
         _positions = positions
     if performance:
-        _performance.update(performance)
-        # Sync total volume from performance
-        if "volume" in performance:
-            _volume_data["total"] = performance["volume"]
+        # Don't let performance["volume"] overwrite _volume_data["total"]
+        # which is the authoritative accumulator updated by update_volume()
+        perf_copy = {k: v for k, v in performance.items() if k != "volume"}
+        _performance.update(perf_copy)
     if signal:
         _current_signal.update(signal)
-
 
 def update_volume(symbol: str, trade_volume: float, trade_pnl: float, trade_fee: float):
     """Update per-market volume tracking (called by trader on each fill)."""
@@ -302,6 +382,28 @@ def update_volume(symbol: str, trade_volume: float, trade_pnl: float, trade_fee:
         m["volume"] for m in _volume_data["per_market"].values()
     )
 
+
+def add_fill(symbol: str, side: str, price: float, size: float, pnl: float, fee: float, note: str = ""):
+    """Record a fill in the history (called by trader on each fill)."""
+    _fills.insert(0, {
+        "id": f"{symbol}-{time.time()}",
+        "time": time.strftime("%H:%M:%S"),
+        "symbol": symbol,
+        "side": side,
+        "price": price,
+        "size": size,
+        "pnl": pnl,
+        "fee": fee,
+        "note": note,
+    })
+    if len(_fills) > 500:
+        _fills.pop()
+
+
+def update_orders(orders: list[dict]):
+    """Update active grid orders list (called by trader after placing orders)."""
+    global _orders
+    _orders = list(orders)
 
 def _add_log(msg: str):
     _activity_log.append({
