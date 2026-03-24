@@ -123,30 +123,9 @@ python launcher.py
 
 ZERO1 is a fully automated **Market Making** bot. It continuously places buy and sell orders around the current market price, collecting the spread on every fill — like a mini exchange desk running 24/7 on your wallet.
 
-```
-╔══════════════════════════════════════════════════════════════════╗
-║                        ZERO1 ENGINE                              ║
-╠══════════════╦═══════════════════════════╦════════════════════════╣
-║  DATA LAYER  ║      BRAIN LAYER          ║   EXECUTION LAYER      ║
-║              ║                           ║                        ║
-║  Binance     ║  ┌─────────────────────┐  ║   01 Exchange          ║
-║  Futures     ║  │  Signal Pipeline    │  ║                        ║
-║              ║  │  ├ RSI Filter       │  ║   ┌────────────────┐   ║
-║  ├ Klines    ║  │  ├ ADX Regime       │  ║   │  BUY  Orders   │   ║
-║  ├ Volume    ║──►  │  ├ VWAP Distance  │──►  │  $99,920       │   ║
-║  ├ Open Int  ║  │  ├ OI Bias          │  ║   │  $99,940       │   ║
-║  └ Funding   ║  │  └ Heatmap Score    │  ║   │  $99,960  ◄────────── Fair Price $100,000
-║              ║  └─────────────────────┘  ║   │  $100,040      │   ║
-║              ║                           ║   │  $100,060      │   ║
-║              ║  ┌─────────────────────┐  ║   │  SELL Orders   │   ║
-║              ║  │  Risk Engine        │  ║   └────────────────┘   ║
-║              ║  │  ├ Position Sizing  │  ║                        ║
-║              ║  │  ├ Stop Loss        │  ║   Fills → P&L          ║
-║              ║  │  ├ Drawdown Halt    │  ║   tracked in           ║
-║              ║  │  └ Inventory Skew   │  ║   real-time            ║
-║              ║  └─────────────────────┘  ║                        ║
-╚══════════════╩═══════════════════════════╩════════════════════════╝
-```
+<p align="center">
+  <img src="assets/architecture.svg" alt="ZERO1 Architecture" width="100%"/>
+</p>
 
 ### How It Works — Step by Step
 
