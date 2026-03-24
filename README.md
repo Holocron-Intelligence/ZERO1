@@ -121,34 +121,66 @@ python launcher.py
 
 ## 🏗️ Architecture & Workflow
 
-```
-┌─────────────────┐     Live Indicators     ┌─────────────────┐
-│  Binance Futures │ ──────────────────────► │  Signal Logic   │
-│  (Data Source)   │                         │  + Risk Engine  │
-└─────────────────┘                         └────────┬────────┘
-        ▲                                            │
-        │  Local Price                  Atomic Orders│
-        │                                            ▼
-        │                              ┌─────────────────────┐
-        └──────────────────────────────│    01 Exchange       │
-                                       │    (Execution)       │
-                                       └─────────────────────┘
-```
-
-### How It Works
-
-1. **Binance-Only Data**: The bot uses **Binance Futures** as the single source of truth for indicators (RSI, ADX, ATR, VWAP) due to its superior liquidity and price discovery.
-2. **Real-Time Intelligence**: It fetches real-time **Open Interest** and **Volume Delta** to compute a "Smart Score," identifying the best moments to provide liquidity.
-3. **Dual-Tier Strategy**:
-   - **Tier A (Volume)**: Targeted high-frequency trading with tight spreads to maximize volume.
-   - **Tier B (Profit)**: Captures larger spreads on medium-liquidity coins for net profit.
-4. **Precision Execution**: Orders are placed on **01 Exchange** using "Atomic Requoting," ensuring your quotes are always competitive and pay the lowest possible fees (**Maker Fees**).
+ZERO1 is a fully automated **Market Making** bot. It continuously places buy and sell orders around the current market price, collecting the spread on every fill — like a mini exchange desk running 24/7 on your wallet.
 
 ```
-|------- spread -------|------- spread -------|
-     Buy Orders         Fair Price        Sell Orders
-     $99,920            $100,000          $100,080
+╔══════════════════════════════════════════════════════════════════╗
+║                        ZERO1 ENGINE                              ║
+╠══════════════╦═══════════════════════════╦════════════════════════╣
+║  DATA LAYER  ║      BRAIN LAYER          ║   EXECUTION LAYER      ║
+║              ║                           ║                        ║
+║  Binance     ║  ┌─────────────────────┐  ║   01 Exchange          ║
+║  Futures     ║  │  Signal Pipeline    │  ║                        ║
+║              ║  │  ├ RSI Filter       │  ║   ┌────────────────┐   ║
+║  ├ Klines    ║  │  ├ ADX Regime       │  ║   │  BUY  Orders   │   ║
+║  ├ Volume    ║──►  │  ├ VWAP Distance  │──►  │  $99,920       │   ║
+║  ├ Open Int  ║  │  ├ OI Bias          │  ║   │  $99,940       │   ║
+║  └ Funding   ║  │  └ Heatmap Score    │  ║   │  $99,960  ◄────────── Fair Price $100,000
+║              ║  └─────────────────────┘  ║   │  $100,040      │   ║
+║              ║                           ║   │  $100,060      │   ║
+║              ║  ┌─────────────────────┐  ║   │  SELL Orders   │   ║
+║              ║  │  Risk Engine        │  ║   └────────────────┘   ║
+║              ║  │  ├ Position Sizing  │  ║                        ║
+║              ║  │  ├ Stop Loss        │  ║   Fills → P&L          ║
+║              ║  │  ├ Drawdown Halt    │  ║   tracked in           ║
+║              ║  │  └ Inventory Skew   │  ║   real-time            ║
+║              ║  └─────────────────────┘  ║                        ║
+╚══════════════╩═══════════════════════════╩════════════════════════╝
 ```
+
+### How It Works — Step by Step
+
+**Step 1 — Data Collection**
+Every second, ZERO1 pulls live market data from **Binance Futures** — the most liquid crypto exchange in the world. This includes candlestick data (OHLCV), real-time Open Interest, Volume Delta, and funding rates. Binance is used as the data source (not for trading) because its price discovery is the most accurate in the market.
+
+**Step 2 — Signal Intelligence**
+The bot runs a multi-layer signal pipeline on every new candle:
+- **RSI** — detects overbought/oversold conditions to avoid buying tops or selling bottoms
+- **ADX + DI** — measures trend strength; the bot switches between range and trend mode automatically
+- **VWAP Distance** — filters out signals when price is too far from fair value
+- **Open Interest Bias** — detects whether large players are accumulating long or short positions
+- **Liquidity Heatmap** — identifies price levels with high order concentration to place smarter quotes
+
+**Step 3 — Grid Generation**
+Based on the signal score, the bot generates a **multi-level grid** of buy and sell orders around the current price. The grid spacing is dynamic — wider during high volatility (ATR-based), tighter during calm markets. This ensures the bot always quotes competitively without taking excessive risk.
+
+```
+|——— spread ———|——— spread ———|——— spread ———|——— spread ———|
+  BUY $99,920   BUY $99,960   FAIR $100,000  SELL $100,040  SELL $100,080
+```
+
+**Step 4 — Risk Management**
+Before any order is placed, the Risk Engine validates:
+- Position size is within capital limits (`max_position_pct`)
+- Daily drawdown has not exceeded the safety threshold (`max_daily_drawdown_pct`)
+- Inventory is not too skewed in one direction (auto-rebalancing via `inventory_skew_factor`)
+- Volatility is not spiking (automatic pause via `volatility_pause_mult`)
+
+**Step 5 — Execution on 01 Exchange**
+Orders are placed on **01 Exchange** as **Maker orders** — meaning the bot adds liquidity to the orderbook and pays zero or negative fees (rebates). Every time a buy and sell order both fill, the bot captures the spread as profit. The session is shared across all coins via a single authenticated client to avoid signature conflicts.
+
+**Step 6 — Continuous Monitoring**
+The bot monitors every fill in real-time, updates the equity curve, tracks volume generated per coin, and pushes all data to the live dashboard. If the daily loss limit is hit, the bot halts automatically and cancels all open orders.
 
 ---
 
